@@ -1,12 +1,13 @@
 plugins {
     id("com.android.application")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // The Flutter Gradle Plugin must be applied after the Android Gradle plugin.
+    // Kotlin plugin is no longer required for AGP 9.0+
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "com.example.kai_slideshow"
-    compileSdk = 36
+    compileSdk = 35  // AGP 9.0 works best with compileSdk 35
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -20,7 +21,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = 36
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
@@ -34,12 +35,9 @@ android {
     }
 }
 
-kotlin {
-    compilerOptions {
-        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
-    }
-}
+// Kotlin configuration is now handled by AGP 9.0+ built-in Kotlin support
+// No need for separate kotlin {} block when using builtInKotlin=true
 
 flutter {
-    source = "../.."
+    source = "..\.."
 }
