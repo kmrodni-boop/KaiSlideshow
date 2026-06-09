@@ -40,14 +40,14 @@ class MainActivity: FlutterActivity() {
         when (intent.action) {
             Intent.ACTION_SEND -> {
                 // Single image
-                val uri = intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                val uri = intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
                 uri?.let {
                     initialUris = listOf(it.toString())
                 }
             }
             Intent.ACTION_SEND_MULTIPLE -> {
                 // Multiple images
-                val uris = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                val uris = intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
                 uris?.let {
                     initialUris = it.map { uri -> uri.toString() }
                 }
