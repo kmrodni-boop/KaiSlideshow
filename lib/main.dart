@@ -2,60 +2,106 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
 
-void main() {
-  runApp(const KaiSlideshowApp());
+import 'package:kai_slideshow/models/slideshow_settings.dart';
+import 'package:kai_slideshow/utils/constants.dart';
+import 'package:kai_slideshow/utils/file_utils.dart';
+import 'package:kai_slideshow/utils/file_handler.dart';
+import 'package:kai_slideshow/widgets/image_display.dart';
+import 'package:kai_slideshow/widgets/info_bar.dart';
+import 'package:kai_slideshow/widgets/control_bar.dart';
+
+// Global variable to store initial file arguments
+List<String> initialFileArguments = [];
+
+void main(List<String> arguments) async {
+  // Store arguments for later use
+  initialFileArguments = arguments;
+  
+  // Initialize Flutter
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // Process arguments and Android intents
+  final imagePaths = await _processInitialFiles();
+  
+  // If we have image paths, start directly with slideshow
+  if (imagePaths.isNotEmpty) {
+    runApp(KaiSlideshowApp(initialImages: imagePaths));
+  } else {
+    runApp(const KaiSlideshowApp());
+  }
+}
+
+/// Process initial files from command-line arguments or Android intents
+Future<List<String>> _processInitialFiles() async {
+  // Try to get files from Android intent first
+  final intentFiles = await FileHandler.processInitialFiles();
+  if (intentFiles.isNotEmpty) {
+    return intentFiles;
+  }
+  
+  // Fall back to command-line arguments (for desktop)
+  return await FileHandler.processArguments(initialFileArguments);
 }
 
 class KaiSlideshowApp extends StatelessWidget {
-  const KaiSlideshowApp({super.key});
+  final List<String>? initialImages;
+
+  const KaiSlideshowApp({super.key, this.initialImages});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Kai Slideshow',
+      title: AppConstants.appName,
       debugShowCheckedModeBanner: false,
-      // Setter bakgrunnen til svart, akkurat som din setStyleSheet
-      theme: ThemeData.dark().copyWith(scaffoldBackgroundColor: Colors.black),
-      home: const SlideshowScreen(),
+      theme: ThemeData.dark().copyWith(
+        scaffoldBackgroundColor: AppConstants.backgroundColor,
+      ),
+      home: SlideshowScreen(initialImages: initialImages),
     );
   }
 }
 
 class SlideshowScreen extends StatefulWidget {
-  const SlideshowScreen({super.key});
+  final List<String>? initialImages;
+
+  const SlideshowScreen({super.key, this.initialImages});
 
   @override
   State<SlideshowScreen> createState() => _SlideshowScreenState();
 }
 
 class _SlideshowScreenState extends State<SlideshowScreen> {
-  // Tilstander (State)
+  // State
   final List<String> _imageList = [];
   int _currentIndex = 0;
-  int _interval = 5;
-  bool _shuffle = true;
+  SlideshowSettings _settings = SlideshowSettings.defaultSettings;
   bool _isPlaying = false;
   bool _showUI = true;
+  bool _isLoading = false;
+  bool _isFullscreen = false;
+  bool _initialLoadComplete = false;
 
-  // Timere (Tilsvarer dine QTimer-objekter)
+  // Timers
   Timer? _slideTimer;
   Timer? _uiTimer;
 
-  // Fokus for tastatur (For piltaster og mellomrom)
+  // Focus for keyboard input
   final FocusNode _focusNode = FocusNode();
+
+  // Preferences
+  late SharedPreferences _prefs;
 
   @override
   void initState() {
     super.initState();
-    _startUiTimer();
-    // Be om fokus for å fange opp tastetrykk
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _focusNode.requestFocus();
-    });
+    _initApp();
   }
 
   @override
@@ -66,38 +112,155 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
     super.dispose();
   }
 
-  // --- Logikk ---
+  Future<void> _initApp() async {
+    // Load preferences
+    _prefs = await SharedPreferences.getInstance();
+    await _loadSettings();
+
+    // Process initial images if provided
+    if (widget.initialImages != null && widget.initialImages!.isNotEmpty) {
+      final validImages = await FileHandler.filterValidImages(widget.initialImages!);
+      if (validImages.isNotEmpty) {
+        setState(() {
+          _imageList.addAll(FileHandler.getUniquePaths(validImages));
+          _applySorting();
+        });
+      }
+    }
+
+    // Request focus for keyboard input
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _focusNode.requestFocus();
+      // Auto-start slideshow if we have images from command line or intent
+      if (_imageList.isNotEmpty && !_initialLoadComplete) {
+        _initialLoadComplete = true;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _togglePlay();
+        });
+      }
+    });
+
+    // Start UI hide timer
+    _startUiTimer();
+  }
+
+  Future<void> _loadSettings() async {
+    try {
+      final settingsMap = {
+        'interval': _prefs.getInt('interval') ?? 5,
+        'shuffle': _prefs.getBool('shuffle') ?? true,
+      };
+      setState(() {
+        _settings = SlideshowSettings.fromJson(settingsMap);
+      });
+    } catch (e) {
+      debugPrint('Error loading settings: $e');
+    }
+  }
+
+  Future<void> _saveSettings() async {
+    await _prefs.setInt('interval', _settings.interval);
+    await _prefs.setBool('shuffle', _settings.shuffle);
+  }
+
+  // --- Image Loading ---
 
   Future<void> _pickFolder() async {
-    // Tilsvarer din select_folders_dialog()
-      String? directoryPath = await FilePicker.platform.getDirectoryPath();    if (directoryPath != null) {
-      final dir = Directory(directoryPath);
-      final files = dir.listSync(recursive: true);
-      
-      List<String> newImages = [];
-      for (var file in files) {
-        if (file is File) {
-          final ext = file.path.toLowerCase();
-          if (ext.endsWith('.jpg') || ext.endsWith('.jpeg') || ext.endsWith('.png') || ext.endsWith('.webp') || ext.endsWith('.bmp')) {
-            newImages.add(file.path);
+    if (_isLoading) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      String? directoryPath = await FilePicker.platform.getDirectoryPath();
+      if (directoryPath != null) {
+        final newImages = await loadImagesFromDirectory(directoryPath);
+
+        if (newImages.isNotEmpty) {
+          setState(() {
+            _imageList.addAll(FileHandler.getUniquePaths(newImages));
+            _applySorting();
+            if (!_isPlaying && _imageList.isNotEmpty) {
+              _togglePlay();
+            }
+          });
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('No images found in the selected folder'),
+                duration: Duration(seconds: 2),
+              ),
+            );
           }
         }
       }
+    } catch (e) {
+      debugPrint('Error picking folder: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
-      setState(() {
-        _imageList.addAll(newImages);
-        _applySorting();
-        if (_imageList.isNotEmpty && !_isPlaying) {
-          _togglePlay();
+  Future<void> _pickFiles() async {
+    if (_isLoading) return;
+
+    setState(() => _isLoading = true);
+
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: true,
+        withReadStream: false,
+      );
+
+      if (result != null && result.files.isNotEmpty) {
+        final newImagePaths = <String>[];
+        for (var file in result.files) {
+          if (file.path != null && isSupportedImage(file.path!)) {
+            newImagePaths.add(file.path!);
+          }
         }
-      });
+
+        if (newImagePaths.isNotEmpty) {
+          setState(() {
+            _imageList.addAll(FileHandler.getUniquePaths(newImagePaths));
+            _applySorting();
+            if (!_isPlaying && _imageList.isNotEmpty) {
+              _togglePlay();
+            }
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error picking files: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${e.toString()}'),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
   void _applySorting() {
-    // Din apply_sorting logikk
     setState(() {
-      if (_shuffle) {
+      if (_settings.shuffle) {
         _imageList.shuffle(Random());
       } else {
         _imageList.sort();
@@ -105,6 +268,8 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
       _currentIndex = 0;
     });
   }
+
+  // --- Navigation ---
 
   void _showNext() {
     if (_imageList.isEmpty) return;
@@ -121,13 +286,15 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
     });
   }
 
+  // --- Playback Control ---
+
   void _togglePlay() {
     setState(() {
       if (_isPlaying) {
         _slideTimer?.cancel();
         _isPlaying = false;
         _showUI = true;
-        _uiTimer?.cancel(); // Stopper skjuling av meny når på pause
+        _uiTimer?.cancel();
       } else {
         _isPlaying = true;
         _showUI = false;
@@ -140,195 +307,243 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
   void _startSlideTimer() {
     _slideTimer?.cancel();
     if (_imageList.isNotEmpty) {
-      _slideTimer = Timer.periodic(Duration(seconds: _interval), (timer) {
-        _showNext();
-      });
+      _slideTimer = Timer.periodic(
+        Duration(seconds: _settings.interval),
+        (timer) {
+          if (mounted) {
+            _showNext();
+          }
+        },
+      );
     }
   }
 
   void _startUiTimer() {
-    // Tilsvarer din mouse_timer på 2-3 sekunder
     _uiTimer?.cancel();
-    _uiTimer = Timer(const Duration(seconds: 3), () {
-      if (_isPlaying) {
+    if (!_isPlaying) return;
+
+    _uiTimer = Timer(AppConstants.uiHideDuration, () {
+      if (mounted && _isPlaying) {
         setState(() => _showUI = false);
       }
     });
   }
 
   void _onInteraction() {
-    // Våkner UI ved bevegelse/trykk (Tilsvarer mouseMoveEvent)
     if (!_showUI) {
       setState(() => _showUI = true);
     }
-    _startUiTimer();
+    if (_isPlaying) {
+      _startUiTimer();
+    }
   }
 
-  // --- UI Bygging ---
+  // --- Fullscreen Control ---
+
+  Future<void> _toggleFullscreen() async {
+    try {
+      if (_isFullscreen) {
+        await SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.edgeToEdge,
+        );
+      } else {
+        await SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.immersiveSticky,
+        );
+      }
+      setState(() => _isFullscreen = !_isFullscreen);
+    } catch (e) {
+      debugPrint('Error toggling fullscreen: $e');
+    }
+  }
+
+  // --- Exit ---
+
+  Future<void> _exitApp() async {
+    if (_isPlaying) {
+      _togglePlay();
+      await Future.delayed(const Duration(milliseconds: 300));
+    }
+    if (Platform.isAndroid) {
+      SystemNavigator.pop();
+    } else if (Platform.isIOS) {
+      exit(0);
+    } else {
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    }
+  }
+
+  // --- UI Building ---
 
   @override
   Widget build(BuildContext context) {
-    return KeyboardListener(
-      focusNode: _focusNode,
-      onKeyEvent: (KeyEvent event) {
-        if (event is KeyDownEvent) {
-          if (event.logicalKey == LogicalKeyboardKey.space) {
-            _togglePlay();
-          } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-            _showNext();
-          } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-            _showPrevious();
-          } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-            SystemNavigator.pop(); // Avslutter appen
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: const SystemUiOverlayStyle(
+        systemNavigationBarColor: Colors.black,
+        systemNavigationBarIconBrightness: Brightness.light,
+        statusBarColor: Colors.transparent,
+        statusBarIconBrightness: Brightness.light,
+      ),
+      child: KeyboardListener(
+        focusNode: _focusNode,
+        onKeyEvent: (KeyEvent event) {
+          if (event is KeyDownEvent) {
+            if (event.logicalKey == LogicalKeyboardKey.space) {
+              _togglePlay();
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+              _showNext();
+            } else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+              _showPrevious();
+            } else if (event.logicalKey == LogicalKeyboardKey.escape) {
+              if (_isPlaying) {
+                _togglePlay();
+              } else {
+                _exitApp();
+              }
+            } else if (event.logicalKey == LogicalKeyboardKey.keyF) {
+              _toggleFullscreen();
+            }
           }
-        }
-      },
-      child: MouseRegion(
-        onHover: (_) => _onInteraction(),
-        cursor: _showUI ? SystemMouseCursors.basic : SystemMouseCursors.none,
-        child: GestureDetector(
-          onTap: _onInteraction,
-          child: Scaffold(
-            body: Stack(
-              fit: StackFit.expand,
-              children: [
-                // 1. Selve bildet (Tilsvarer QLabel med QPixmap)
-                if (_imageList.isNotEmpty)
-                  Image.file(
-                    File(_imageList[_currentIndex]),
-                    fit: BoxFit.contain,
-                  )
-                else
-                  const Center(child: Text("Ingen bilder valgt", style: TextStyle(color: Colors.white54))),
+        },
+        child: MouseRegion(
+          onHover: (_) => _onInteraction(),
+          cursor: _showUI ? SystemMouseCursors.basic : SystemMouseCursors.none,
+          child: GestureDetector(
+            onTap: _onInteraction,
+            child: Scaffold(
+              body: Stack(
+                fit: StackFit.expand,
+                children: [
+                  // 1. Image Display (centered, maintains aspect ratio)
+                  if (_imageList.isNotEmpty)
+                    ImageDisplay(
+                      imagePath: _imageList[_currentIndex],
+                      fit: BoxFit.contain,
+                    )
+                  else
+                    _buildEmptyState(),
 
-                // 2. Info Bar (Tilsvarer din info_bar nede i hjørnet)
-                if (_imageList.isNotEmpty && _showUI)
-                  Positioned(
-                    bottom: 20,
-                    left: 20,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.6),
-                        borderRadius: const BorderRadius.only(bottomRight: Radius.circular(12)),
-                      ),
-                      child: Text(
-                        "${_currentIndex + 1} / ${_imageList.length}   •   ${_imageList[_currentIndex].split(Platform.pathSeparator).last}",
-                        style: const TextStyle(color: Color(0xFFDDDDDD)),
-                      ),
+                  // 2. Info Bar (bottom-left)
+                  if (_imageList.isNotEmpty && _showUI)
+                    InfoBar(
+                      currentIndex: _currentIndex + 1,
+                      totalImages: _imageList.length,
+                      imagePath: _imageList[_currentIndex],
                     ),
-                  ),
 
-                // 3. Pause ikon (Tilsvarer din pause_label med 50px font)
-                if (!_isPlaying && _imageList.isNotEmpty)
-                  Center(
-                    child: Container(
-                      padding: const EdgeInsets.all(40),
-                      decoration: BoxDecoration(
-                        color: const Color.fromRGBO(20, 20, 20, 0.8), // rgba(20, 20, 20, 200)
-                        borderRadius: BorderRadius.circular(25),
-                        border: Border.all(color: const Color(0xFF444444)),
-                      ),
-                      child: const Text(
-                        "Ⅱ PAUSE",
-                        style: TextStyle(color: Colors.white, fontSize: 50, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-
-                // 4. Glassmorphism Meny Bar (Tilsvarer din menu_bar QFrame)
-                AnimatedOpacity(
-                  opacity: _showUI ? 1.0 : 0.0,
-                  duration: const Duration(milliseconds: 300),
-                  child: Align(
-                    alignment: Alignment.topCenter,
-                    child: Padding(
-                      padding: const EdgeInsets.only(top: 40),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(20),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                          child: Container(
-                            height: 80,
-                            constraints: const BoxConstraints(maxWidth: 800),
-                            padding: const EdgeInsets.symmetric(horizontal: 25),
-                            decoration: BoxDecoration(
-                              color: const Color.fromRGBO(35, 35, 35, 0.9), // rgba(35, 35, 35, 230)
-                              border: Border.all(color: const Color(0xFF555555)),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              children: [
-                                const Text("Intervall:", style: TextStyle(color: Color(0xFFEEEEEE), fontSize: 14)),
-                                const SizedBox(width: 10),
-                                DropdownButton<int>(
-                                  dropdownColor: const Color(0xFF444444),
-                                  value: _interval,
-                                  underline: const SizedBox(),
-                                  style: const TextStyle(color: Colors.white),
-                                  items: [2, 3, 5, 10, 20, 30].map((int value) {
-                                    return DropdownMenuItem<int>(
-                                      value: value,
-                                      child: Text(value.toString()),
-                                    );
-                                  }).toList(),
-                                  onChanged: (int? newValue) {
-                                    if (newValue != null) {
-                                      setState(() {
-                                        _interval = newValue;
-                                        if (_isPlaying) _startSlideTimer();
-                                      });
-                                    }
-                                  },
-                                ),
-                                const SizedBox(width: 20),
-                                Row(
-                                  children: [
-                                    Checkbox(
-                                      value: _shuffle,
-                                      activeColor: Colors.blue,
-                                      onChanged: (bool? value) {
-                                        setState(() {
-                                          _shuffle = value ?? true;
-                                          _applySorting();
-                                        });
-                                      },
-                                    ),
-                                    const Text("Tilfeldig", style: TextStyle(color: Colors.white)),
-                                  ],
-                                ),
-                                const Spacer(),
-                                ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFF2980B9), // Din Legg til-farge
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                  ),
-                                  onPressed: _pickFolder,
-                                  child: const Text("Legg til mapper"),
-                                ),
-                                const SizedBox(width: 15),
-                                ElevatedButton(
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: const Color(0xFFC0392B), // Din Avslutt-farge
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                                  ),
-                                  onPressed: () => SystemNavigator.pop(),
-                                  child: const Text("Avslutt", style: TextStyle(fontWeight: FontWeight.bold)),
-                                ),
-                              ],
-                            ),
+                  // 3. Pause Overlay (center)
+                  if (!_isPlaying && _imageList.isNotEmpty && _showUI)
+                    Center(
+                      child: Container(
+                        padding: const EdgeInsets.all(40),
+                        decoration: BoxDecoration(
+                          color: const Color.fromRGBO(20, 20, 20, 0.8),
+                          borderRadius: BorderRadius.circular(25),
+                          border: Border.all(color: AppConstants.borderColor),
+                        ),
+                        child: const Text(
+                          AppConstants.pauseLabel,
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 50,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
                       ),
                     ),
+
+                  // 4. Control Bar (top-center)
+                  AnimatedOpacity(
+                    opacity: _showUI ? 1.0 : 0.0,
+                    duration: AppConstants.fadeAnimationDuration,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: Padding(
+                        padding: const EdgeInsets.only(
+                          top: AppConstants.infoBarPadding,
+                        ),
+                        child: ControlBar(
+                          interval: _settings.interval,
+                          shuffle: _settings.shuffle,
+                          isPlaying: _isPlaying,
+                          intervalOptions: AppConstants.intervalOptions,
+                          onIntervalChanged: (newValue) {
+                            setState(() {
+                              _settings = _settings.copyWith(
+                                interval: newValue,
+                              );
+                              _saveSettings();
+                              if (_isPlaying) _startSlideTimer();
+                            });
+                          },
+                          onShuffleChanged: (newValue) {
+                            setState(() {
+                              _settings = _settings.copyWith(
+                                shuffle: newValue,
+                              );
+                              _saveSettings();
+                              _applySorting();
+                            });
+                          },
+                          onAddFiles: _pickFiles,
+                          onAddFolder: _pickFolder,
+                          onExit: _exitApp,
+                        ),
+                      ),
+                    ),
                   ),
-                ),
-              ],
+
+                  // 5. Loading indicator
+                  if (_isLoading)
+                    const Center(
+                      child: SizedBox(
+                        width: 64,
+                        height: 64,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white54,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.image_not_supported,
+            size: 64,
+            color: Colors.white30,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            AppConstants.noImagesMessage,
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 18,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            AppConstants.noImagesSubtitle,
+            style: TextStyle(
+              color: Colors.white38,
+            ),
+          ),
+        ],
       ),
     );
   }
