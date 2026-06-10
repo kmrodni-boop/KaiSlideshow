@@ -1,23 +1,23 @@
 name: kai_slideshow
 description: A fullscreen image slideshow application with context menu and share integration.
 publish_to: 'none'
-version: 0.3.0+1
+version: 0.4.0+1
 
 environment:
   sdk: ^3.12.0
-  flutter: ">=3.16.0"
+  flutter: ">=3.19.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  file_picker: ^11.0.2
+  file_picker: ^8.0.0
   shared_preferences: ^2.2.2
   path_provider: ^2.1.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
+  flutter_lints: ^4.0.0
 
 flutter:
   uses-material-design: true
