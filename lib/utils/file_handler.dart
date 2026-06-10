@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:kai_slideshow/utils/file_utils.dart';
 
 /// Handles command-line arguments and file/folder selection
@@ -38,7 +38,7 @@ class FileHandler {
     try {
       if (Platform.isAndroid) {
         final List<dynamic>? uris = await _channel.invokeMethod('getInitialUris');
-        if (uris != null) {
+        if (uris != null && uris.isNotEmpty) {
           return uris.map((uri) => uri.toString()).toList();
         }
       }
@@ -49,25 +49,44 @@ class FileHandler {
   }
 
   /// Convert Android content URIs to file paths
-  /// This is a simplified version - in production, you'd need platform-specific code
+  /// This handles both file:// and content:// URIs
   static Future<List<String>> convertUrisToPaths(List<String> uris) async {
     final paths = <String>[];
     
     for (final uri in uris) {
-      // For file:// URIs, just use the path
+      if (uri.isEmpty) continue;
+      
+      // Handle file:// URIs
       if (uri.startsWith('file://')) {
         final path = uri.substring(7); // Remove 'file://' prefix
-        paths.add(path);
-      } else if (Platform.isAndroid) {
-        // For content:// URIs on Android, we need to use a platform channel
-        // This is a placeholder - actual implementation requires native code
-        try {
-          // Try to get the path from the URI using a platform channel
-          // This would require implementing a native method to resolve the URI
-          paths.add(uri); // For now, just pass the URI
-        } catch (e) {
-          debugPrint('Could not convert URI to path: $uri');
+        if (isSupportedImage(path)) {
+          paths.add(path);
         }
+        continue;
+      }
+      
+      // Handle content:// URIs (Android Share intent)
+      if (uri.startsWith('content://') && Platform.isAndroid) {
+        try {
+          // Use platform channel to resolve content URI to file path
+          final String? filePath = await _channel.invokeMethod(
+            'getFilePathFromUri',
+            {'uri': uri},
+          );
+          
+          if (filePath != null && filePath.isNotEmpty && isSupportedImage(filePath)) {
+            paths.add(filePath);
+          }
+        } catch (e) {
+          debugPrint('Error resolving content URI: $uri - $e');
+          // Fallback: try to use the URI directly (some plugins handle it)
+          paths.add(uri);
+        }
+      }
+      
+      // Handle regular file paths
+      if (isSupportedImage(uri)) {
+        paths.add(uri);
       }
     }
     
@@ -84,7 +103,6 @@ class FileHandler {
     
     // Fall back to command-line arguments
     // Note: On Android, command-line arguments are not typically available
-    // This is mainly for desktop platforms
     return [];
   }
 
@@ -94,8 +112,11 @@ class FileHandler {
 
     for (final path in paths) {
       try {
-        // Skip content:// URIs on Android for now
-        if (path.startsWith('content://')) {
+        // Skip empty paths
+        if (path.isEmpty) continue;
+        
+        // For content:// URIs on Android, we can't check existence directly
+        if (path.startsWith('content://') && Platform.isAndroid) {
           validImages.add(path);
           continue;
         }
@@ -105,6 +126,7 @@ class FileHandler {
           validImages.add(path);
         }
       } catch (e) {
+        debugPrint('Error validating path: $path - $e');
         // Skip invalid files
         continue;
       }

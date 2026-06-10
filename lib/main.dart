@@ -187,8 +187,8 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('No images found in the selected folder'),
-                duration: Duration(seconds: 2),
+                content: Text('No images found in the selected folder. Make sure the folder contains supported image files (jpg, png, webp, etc.)'),
+                duration: Duration(seconds: 3),
               ),
             );
           }
@@ -199,7 +199,7 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Error: ${e.toString()}'),
+            content: Text('Error accessing folder: ${e.toString()}'),
             duration: const Duration(seconds: 3),
           ),
         );
