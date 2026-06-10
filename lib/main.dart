@@ -375,6 +375,38 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
     }
   }
 
+  // --- Gesture Handling ---
+
+  void _handleTap() {
+    if (_imageList.isEmpty) return;
+    
+    // Single tap: toggle play/pause
+    _togglePlay();
+  }
+
+  void _handleDoubleTap() {
+    if (_imageList.isEmpty) return;
+    
+    // Double tap: toggle fullscreen
+    _toggleFullscreen();
+  }
+
+  void _handleSwipeLeft() {
+    if (_imageList.isEmpty) return;
+    
+    // Swipe left: next image
+    _showNext();
+    _startUiTimer(); // Reset UI hide timer
+  }
+
+  void _handleSwipeRight() {
+    if (_imageList.isEmpty) return;
+    
+    // Swipe right: previous image
+    _showPrevious();
+    _startUiTimer(); // Reset UI hide timer
+  }
+
   // --- UI Building ---
 
   @override
@@ -411,7 +443,17 @@ class _SlideshowScreenState extends State<SlideshowScreen> {
           onHover: (_) => _onInteraction(),
           cursor: _showUI ? SystemMouseCursors.basic : SystemMouseCursors.none,
           child: GestureDetector(
-            onTap: _onInteraction,
+            onTap: _handleTap,
+            onDoubleTap: _handleDoubleTap,
+            onHorizontalDragEnd: (details) {
+              if (details.primaryVelocity != null) {
+                if (details.primaryVelocity! > 0) {
+                  _handleSwipeRight();
+                } else if (details.primaryVelocity! < 0) {
+                  _handleSwipeLeft();
+                }
+              }
+            },
             child: Scaffold(
               body: Stack(
                 fit: StackFit.expand,

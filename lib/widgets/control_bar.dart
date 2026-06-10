@@ -30,13 +30,17 @@ class ControlBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Use full width in portrait mode, constrained width in landscape
+    final isPortrait = MediaQuery.of(context).orientation == Orientation.portrait;
+    final maxWidth = isPortrait ? double.infinity : 900.0;
+
     return ClipRRect(
       borderRadius: BorderRadius.circular(AppConstants.borderRadius),
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
         child: Container(
           height: AppConstants.controlBarHeight,
-          constraints: const BoxConstraints(maxWidth: 900),
+          constraints: BoxConstraints(maxWidth: maxWidth),
           padding: const EdgeInsets.symmetric(horizontal: 25),
           decoration: BoxDecoration(
             color: AppConstants.controlBarColor,

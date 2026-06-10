@@ -4,8 +4,9 @@ import 'package:flutter/material.dart';
 class AppConstants {
   static const String appName = 'Kai Slideshow';
   static const String noImagesMessage = 'No images selected';
-  static const String noImagesSubtitle = 'Click "Add Folders" to get started';
-  static const String addFolders = 'Add Folders';
+  static const String noImagesSubtitle = 'Click "Add Files" or "Add Folder" to get started';
+  static const String addFiles = 'Add Files';
+  static const String addFolder = 'Add Folder';
   static const String exit = 'Exit';
   static const String intervalLabel = 'Interval:';
   static const String shuffleLabel = 'Shuffle';
@@ -29,6 +30,6 @@ class AppConstants {
   static const Color addButtonColor = Color(0xFF2980B9);
   static const Color exitButtonColor = Color(0xFFC0392B);
 
-  /// Interval options (in seconds)
-  static const List<int> intervalOptions = [2, 3, 5, 10, 20, 30];
+  /// Interval options (in seconds) - now includes longer options for elderly users
+  static const List<int> intervalOptions = [2, 3, 5, 10, 20, 30, 60, 120];
 }
