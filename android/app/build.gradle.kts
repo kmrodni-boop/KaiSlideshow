@@ -1,24 +1,18 @@
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
+    // The Flutter Gradle Plugin must be applied after the Android Gradle plugin.
+    // Kotlin plugin is no longer needed for Flutter 3.19+ with built-in Kotlin support
     id("dev.flutter.flutter-gradle-plugin")
 }
 
 android {
     namespace = "com.example.kai_slideshow"
-    compileSdk = 36  // Updated to 36 to match plugin requirements
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
-    }
-
-    kotlin {
-        compilerOptions {
-            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_1_8)
-        }
     }
 
     defaultConfig {
@@ -27,7 +21,7 @@ android {
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
-        targetSdk = 36  // Updated to 36 to match compileSdk
+        targetSdk = 36
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
