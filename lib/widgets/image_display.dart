@@ -1,9 +1,12 @@
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// Widget for displaying images with proper aspect ratio
 /// Images are never stretched - they maintain their aspect ratio
 /// and are centered with black background
+/// Supports both file:// paths and content:// URIs (Android)
 class ImageDisplay extends StatefulWidget {
   final String imagePath;
   final BoxFit fit;
@@ -21,6 +24,7 @@ class ImageDisplay extends StatefulWidget {
 class _ImageDisplayState extends State<ImageDisplay> {
   late Future<ImageProvider> _imageProvider;
   bool _errorLoading = false;
+  Uint8List? _imageBytes;
 
   @override
   void initState() {
@@ -39,16 +43,61 @@ class _ImageDisplayState extends State<ImageDisplay> {
   void _loadImage() {
     setState(() {
       _errorLoading = false;
+      _imageBytes = null;
       _imageProvider = _getImageProvider();
     });
   }
 
   Future<ImageProvider> _getImageProvider() async {
+    // Handle content:// URIs (Android Share intent)
+    if (widget.imagePath.startsWith('content://') && Platform.isAndroid) {
+      try {
+        // Use platform channel to get file bytes from content URI
+        final Uint8List? bytes = await _getBytesFromContentUri(widget.imagePath);
+        if (bytes != null) {
+          setState(() => _imageBytes = bytes);
+          return MemoryImage(bytes);
+        }
+      } catch (e) {
+        debugPrint('Error loading content URI: ${widget.imagePath} - $e');
+      }
+    }
+
+    // Handle file:// URIs and regular file paths
     final file = File(widget.imagePath);
     if (await file.exists()) {
       return FileImage(file);
     }
+
+    // Fallback for direct file paths
+    try {
+      final file = File(widget.imagePath);
+      if (await file.exists()) {
+        return FileImage(file);
+      }
+    } catch (e) {
+      debugPrint('Error loading file: ${widget.imagePath} - $e');
+    }
+
     throw Exception('File not found: ${widget.imagePath}');
+  }
+
+  Future<Uint8List?> _getBytesFromContentUri(String uri) async {
+    try {
+      final result = await MethodChannel('kai_slideshow/intents').invokeMethod(
+        'getImageBytesFromUri',
+        {'uri': uri},
+      );
+      
+      if (result is Uint8List) {
+        return result;
+      } else if (result is List<int>) {
+        return Uint8List.fromList(result);
+      }
+    } catch (e) {
+      debugPrint('Error getting bytes from URI: $e');
+    }
+    return null;
   }
 
   @override
@@ -63,6 +112,21 @@ class _ImageDisplayState extends State<ImageDisplay> {
           if (!snapshot.hasData) {
             return _buildLoadingWidget();
           }
+          
+          // If we have bytes from content URI, use MemoryImage
+          if (_imageBytes != null) {
+            return Image.memory(
+              _imageBytes!,
+              fit: widget.fit,
+              alignment: Alignment.center,
+              errorBuilder: (context, error, stackTrace) {
+                setState(() => _errorLoading = true);
+                return _buildErrorWidget();
+              },
+            );
+          }
+          
+          // Otherwise use the provider from FileImage
           return Image(
             image: snapshot.data!,
             fit: widget.fit,
@@ -89,6 +153,7 @@ class _ImageDisplayState extends State<ImageDisplay> {
   }
 
   Widget _buildErrorWidget() {
+    final displayPath = widget.imagePath.split('/').last;
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
@@ -100,7 +165,7 @@ class _ImageDisplayState extends State<ImageDisplay> {
         ),
         const SizedBox(height: 8),
         Text(
-          widget.imagePath.split('/').last,
+          displayPath,
           style: const TextStyle(color: Colors.white38, fontSize: 12),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
